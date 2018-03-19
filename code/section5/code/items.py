@@ -1,67 +1,121 @@
-import sqlite3
 from flask_restful import Resource, reqparse
 from flask_jwt import jwt_required
+import sqlite3
 
 db = 'data.db'
 
 class Item(Resource):
+    TABLE_NAME = 'items'
+
     parser = reqparse.RequestParser()
-    parser.add_argument('price', type=float, required=True, help="This field cannot be left blank!")
+    parser.add_argument('price',
+        type=float,
+        required=True,
+        help="This field cannot be left blank!"
+    )
 
     @classmethod
     def find_by_name(cls, name):
         connection = sqlite3.connect(db)
-        cursor= connection.cursor()
+        cursor = connection.cursor()
 
-        query = 'SELECT * FROM items WHERE name = ?;'
+        query = "SELECT * FROM {table} WHERE name=?".format(table=cls.TABLE_NAME)
         result = cursor.execute(query, (name,))
         row = result.fetchone()
         connection.close()
 
         if row:
-            return {'item': {'id':row[0], 'name':row[1], 'price':row[2]}}
-        else:
-            return None
+            return {'item': {'name': row[1], 'price': row[2]}}
+
+    @classmethod
+    def insert(cls, item):
+        connection = sqlite3.connect(db)
+        cursor = connection.cursor()
+
+        query = "INSERT INTO {table} VALUES(?, ?)".format(table=cls.TABLE_NAME)
+        cursor.execute(query, (item['name'], item['price']))
+
+        connection.commit()
+        connection.close()
+
+    @classmethod
+    def update(cls, item):
+        connection = sqlite3.connect(db)
+        cursor = connection.cursor()
+
+        query = "UPDATE {table} SET price=? WHERE name=?".format(table=cls.TABLE_NAME)
+        cursor.execute(query, (item['price'], item['name']))
+
+        connection.commit()
+        connection.close()
 
 
     @jwt_required()
     def get(self, name):
         item = self.find_by_name(name)
         if item:
-            return item,200
-        else:
-            return {'message':'Can not find item!'}, 400
+            return item
+        message = 'Item {} not found'.format(name)
+        return {'message': message}, 404
 
-
-
-    @jwt_required()
+    @jwt_required
     def post(self, name):
         if self.find_by_name(name):
-            return {'message':'Duplicated item in database'}, 401
+            return {'message': "An item with name {} already exists.".format(name)}
+
         data = Item.parser.parse_args()
-        if data:
-            item = {'name':name, 'price':data['price']}
-            items.append(item)
-            return item, 201
-        return 400
+
+        item = {'name': name, 'price': data['price']}
+
+        try:
+            Item.insert(item)
+        except:
+            return {"message": "An error occurred inserting the item."}, 500
+
+        return item
 
     @jwt_required()
     def delete(self, name):
-        global items
-        items = list(filter(lambda x: x['name'] != name, items))
-        return {'message':'Deleted'}
+        connection = sqlite3.connect(db)
+        cursor = connection.cursor()
 
+        query = "DELETE FROM {table} WHERE name=?".format(table=self.TABLE_NAME)
+        cursor.execute(query, (name,))
 
+        connection.commit()
+        connection.close()
+
+        return {'message': 'Item deleted'}
+
+    # @jwt_required
     def put(self, name):
         data = Item.parser.parse_args()
-        item = next(filter(lambda x: x['name'] == name, items), None)
+        item = self.find_by_name(name)
+        updated_item = {'name': name, 'price': data['price']}
         if item is None:
-            item = {'name':name, 'price': data['price']}
-            items.append(item)
+            try:
+                Item.insert(updated_item)
+            except:
+                return {"message": "An error occurred inserting the item."}, 500
         else:
-            item.update(data)
-        return item, 201
+            try:
+                Item.update(updated_item)
+            except:
+                return {"message": "An error occurred updating the item."}, 500
+        return updated_item
 
 class ItemList(Resource):
+    TABLE_NAME = 'items'
+
     def get(self):
+        connection = sqlite3.connect(db)
+        cursor = connection.cursor()
+
+        query = "SELECT * FROM {table}".format(table=self.TABLE_NAME)
+        result = cursor.execute(query)
+        items = []
+        for row in result:
+            items.append({'name': row[1], 'price': row[2]})
+        connection.close()
+
         return {'items': items}
